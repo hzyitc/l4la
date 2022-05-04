@@ -75,7 +75,7 @@ func (c *Client) handle(local net.Conn) {
 		local.Close()
 		return
 	}
-	cc.addRemoteConn(conn)
+	cc.AddRemoteConn(conn)
 
 	for i := 1; i < c.conn_number; i++ {
 		conn, err := newRemoteConn(c.server, id)
@@ -84,7 +84,7 @@ func (c *Client) handle(local net.Conn) {
 			cc.Close()
 			break
 		}
-		cc.addRemoteConn(conn)
+		cc.AddRemoteConn(conn)
 	}
 }
 

@@ -53,7 +53,7 @@ func (c *Conn) Close() {
 	c.cancel()
 }
 
-func (c *Conn) addRemoteConn(conn net.Conn) {
+func (c *Conn) AddRemoteConn(conn net.Conn) {
 	c.cond.L.Lock()
 	c.remotes = append(c.remotes, conn)
 	c.cond.L.Unlock()

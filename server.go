@@ -104,7 +104,7 @@ func (s *Server) handle(conn net.Conn) {
 		}
 
 		log.Info("New connection to ", id.String())
-		c.addRemoteConn(conn)
+		c.AddRemoteConn(conn)
 	} else {
 		v, ok := s.conns.Load(id)
 		if !ok {
@@ -116,7 +116,7 @@ func (s *Server) handle(conn net.Conn) {
 		c := v.(*Conn)
 
 		log.Info("New connection to ", id.String())
-		c.addRemoteConn(conn)
+		c.AddRemoteConn(conn)
 	}
 
 }
