@@ -30,18 +30,18 @@ func NewConn(ctx context.Context, local net.Conn) (*Conn, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	c := &Conn{
-		local,
-		nil,
+		local:   local,
+		remotes: nil,
 
-		ctx,
-		cancel,
+		ctx:    ctx,
+		cancel: cancel,
 
-		*sync.NewCond(&sync.Mutex{}),
+		cond: *sync.NewCond(&sync.Mutex{}),
 
-		0,
+		read: 0,
 
-		0,
-		0,
+		selected: 0,
+		write:    0,
 	}
 
 	go c.main()

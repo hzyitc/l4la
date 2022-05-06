@@ -28,9 +28,9 @@ func NewServer(port int, server string) {
 	log.Info("Listening at " + listener.Addr().String())
 
 	s := &Server{
-		server,
+		service: server,
 
-		sync.Map{},
+		conns: sync.Map{},
 	}
 	s.main(listener)
 }

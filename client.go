@@ -26,8 +26,8 @@ func NewClient(port int, server string, conn_number int) {
 	log.Info("Listening at " + listener.Addr().String())
 
 	c := &Client{
-		server,
-		conn_number,
+		server:      server,
+		conn_number: conn_number,
 	}
 	c.main(listener)
 }
