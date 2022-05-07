@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/hzyitc/l4la"
 	"github.com/hzyitc/mnh/log"
 )
 
@@ -75,7 +76,7 @@ func (s *Server) handle(conn net.Conn) {
 
 		id = uuid.New()
 
-		c, err := NewConn(context.TODO(), service)
+		c, err := l4la.NewConn(context.TODO(), service)
 		if err != nil {
 			log.Error("server_handle newRemoteConn error:", err.Error())
 			conn.Close()
@@ -113,7 +114,7 @@ func (s *Server) handle(conn net.Conn) {
 			return
 		}
 
-		c := v.(*Conn)
+		c := v.(*l4la.Conn)
 
 		log.Info("New connection to ", id.String())
 		c.AddRemoteConn(conn)

@@ -1,7 +1,8 @@
 #!/bin/bash
 
-OUTPUT="bin/"
 PROGRAM="l4la"
+CLI="./cli"
+OUTPUT="bin/"
 LDFLAGS="-s -w"
 
 ver="$(git describe --tags --match "v*" --dirty="" 2>/dev/null || git log -1 --pretty=format:"v0.0.0-%h" 2>/dev/null || echo "v0.0.0")"
@@ -36,5 +37,5 @@ for i in "${platforms[@]}"; do
 	filename="${OUTPUT}/${PROGRAM}_${ver}_${os}_${arch}${ext:+.$ext}"
 	echo "build $filename for $i"
 	CGO_ENABLED=0 GOOS="${os}" GOARCH="${arch}" GOMIPS="${mips}" \
-		go build -trimpath -ldflags "$LDFLAGS" -o "${filename}"
+		go build -trimpath -ldflags "$LDFLAGS" -o "${filename}" ${CLI}
 done

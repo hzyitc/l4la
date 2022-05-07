@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/google/uuid"
+	"github.com/hzyitc/l4la"
 	"github.com/hzyitc/mnh/log"
 )
 
@@ -69,7 +70,7 @@ func (c *Client) handle(local net.Conn) {
 		return
 	}
 
-	cc, err := NewConn(context.TODO(), local)
+	cc, err := l4la.NewConn(context.TODO(), local)
 	if err != nil {
 		log.Error("client_handle NewConn error:", err.Error())
 		local.Close()
