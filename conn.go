@@ -26,6 +26,13 @@ type Conn struct {
 	write    uint64
 }
 
+var byteOrder = binary.BigEndian
+
+type header struct {
+	Offset uint64
+	Size   uint16
+}
+
 func NewConn(ctx context.Context, local net.Conn) (*Conn, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -69,26 +76,23 @@ func (c *Conn) AddRemoteConn(conn net.Conn) {
 func (c *Conn) handleRemote(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
-	intbuf := make([]byte, 16)
-	buf := make([]byte, 16+9000)
+	buf := make([]byte, 9000)
 	for {
-		_, err := io.ReadFull(conn, intbuf)
+		var h header
+		err := binary.Read(conn, byteOrder, &h)
 		if err != nil {
-			log.Error("handleRemote read error:", err.Error())
+			log.Error("handleRemote read header error:", err.Error())
 			return
 		}
 
-		offset := binary.BigEndian.Uint64(intbuf[8*0:])
-		size := int(binary.BigEndian.Uint64(intbuf[8*1:]))
-
-		_, err = io.ReadFull(conn, buf[:size])
+		_, err = io.ReadFull(conn, buf[:h.Size])
 		if err != nil {
 			log.Error("handleRemote read error:", err.Error())
 			return
 		}
 
 		c.cond.L.Lock()
-		for c.read != offset {
+		for c.read != h.Offset {
 			select {
 			case <-ctx.Done():
 				c.cond.L.Unlock()
@@ -99,19 +103,19 @@ func (c *Conn) handleRemote(ctx context.Context, conn net.Conn) {
 			c.cond.Wait()
 		}
 
-		n, err := c.local.Write(buf[:size])
+		n, err := c.local.Write(buf[:h.Size])
 		if err != nil {
 			log.Error("handleRemote write error:", err.Error())
 			c.cond.L.Unlock()
 			return
 		}
-		if n != size {
-			log.Error("handleRemote write error:", fmt.Sprintf("sent %d bytes instand of %d bytes", n, size))
+		if n != int(h.Size) {
+			log.Error("handleRemote write error:", fmt.Sprintf("sent %d bytes instand of %d bytes", n, h.Size))
 			c.cond.L.Unlock()
 			return
 		}
 
-		c.read += uint64(size)
+		c.read += uint64(h.Size)
 		c.cond.L.Unlock()
 		c.cond.Broadcast()
 	}
@@ -120,9 +124,9 @@ func (c *Conn) handleRemote(ctx context.Context, conn net.Conn) {
 func (c *Conn) handleLocal(ctx context.Context) {
 	defer c.local.Close()
 
-	buf := make([]byte, 16+9000)
+	buf := make([]byte, 9000)
 	for {
-		size, err := c.local.Read(buf[16:])
+		size, err := c.local.Read(buf)
 		if err != nil {
 			log.Error("handleLocal error:", err.Error())
 			return
@@ -131,15 +135,21 @@ func (c *Conn) handleLocal(ctx context.Context) {
 		conn := c.remotes[c.selected]
 		c.selected = (c.selected + 1) % len(c.remotes)
 
-		binary.BigEndian.PutUint64(buf[8*0:], c.write)
-		binary.BigEndian.PutUint64(buf[8*1:], uint64(size))
+		err = binary.Write(conn, byteOrder, header{
+			Offset: c.write,
+			Size:   uint16(size),
+		})
+		if err != nil {
+			log.Error("handleLocal write header error:", err.Error())
+			return
+		}
 
-		n, err := conn.Write(buf[:16+size])
+		n, err := conn.Write(buf[:size])
 		if err != nil {
 			log.Error("handleLocal write error:", err.Error())
 			return
 		}
-		if n != len(buf[:16+size]) {
+		if n != size {
 			log.Error("handleLocal write error:", fmt.Errorf("sent %d bytes instand of %d bytes", n, len(buf[:16+size])))
 		}
 
