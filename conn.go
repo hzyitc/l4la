@@ -7,7 +7,9 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 
+	"github.com/hzyitc/l4la/buffer"
 	"github.com/hzyitc/mnh/log"
 )
 
@@ -20,7 +22,8 @@ type Conn struct {
 
 	cond sync.Cond
 
-	read uint64
+	read    uint64
+	readBuf *buffer.Buffer
 
 	selected int
 	write    uint64
@@ -45,7 +48,8 @@ func NewConn(ctx context.Context, local net.Conn) (*Conn, error) {
 
 		cond: *sync.NewCond(&sync.Mutex{}),
 
-		read: 0,
+		read:    0,
+		readBuf: buffer.NewBuffer(),
 
 		selected: 0,
 		write:    0,
@@ -76,7 +80,6 @@ func (c *Conn) AddRemoteConn(conn net.Conn) {
 func (c *Conn) handleRemote(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
-	buf := make([]byte, 9000)
 	for {
 		var h header
 		err := binary.Read(conn, byteOrder, &h)
@@ -85,39 +88,39 @@ func (c *Conn) handleRemote(ctx context.Context, conn net.Conn) {
 			return
 		}
 
-		_, err = io.ReadFull(conn, buf[:h.Size])
+		buf := make([]byte, h.Size)
+		_, err = io.ReadFull(conn, buf)
 		if err != nil {
 			log.Error("handleRemote read error:", err.Error())
 			return
 		}
 
-		c.cond.L.Lock()
-		for c.read != h.Offset {
-			select {
-			case <-ctx.Done():
-				c.cond.L.Unlock()
-				return
-			default:
+		c.readBuf.Write(h.Offset, buf)
+		atomic.AddUint64(&c.read, uint64(h.Size))
+
+		if !func() bool {
+			c.cond.L.Lock()
+			defer c.cond.L.Unlock()
+
+			for {
+				_, buf = c.readBuf.Pop(9000, true)
+				if buf == nil {
+					return true
+				}
+
+				n, err := c.local.Write(buf)
+				if err != nil {
+					log.Error("handleRemote write error:", err.Error())
+					return false
+				}
+				if n != len(buf) {
+					log.Error("handleRemote write error:", fmt.Sprintf("sent %d bytes instand of %d bytes", n, len(buf)))
+					return false
+				}
 			}
-
-			c.cond.Wait()
-		}
-
-		n, err := c.local.Write(buf[:h.Size])
-		if err != nil {
-			log.Error("handleRemote write error:", err.Error())
-			c.cond.L.Unlock()
+		}() {
 			return
 		}
-		if n != int(h.Size) {
-			log.Error("handleRemote write error:", fmt.Sprintf("sent %d bytes instand of %d bytes", n, h.Size))
-			c.cond.L.Unlock()
-			return
-		}
-
-		c.read += uint64(h.Size)
-		c.cond.L.Unlock()
-		c.cond.Broadcast()
 	}
 }
 
