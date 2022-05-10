@@ -176,11 +176,7 @@ func (c *Conn) handleLocal(ctx context.Context) {
 
 func (c *Conn) main() {
 	for {
-		select {
-		case <-c.ctx.Done():
-			return
-		case <-c.remotesNotify.Wait():
-		}
+		ch := c.remotesNotify.Wait()
 
 		c.remotesLock.Lock()
 		if len(c.remotes) >= 2 {
@@ -188,6 +184,12 @@ func (c *Conn) main() {
 			break
 		}
 		c.remotesLock.Unlock()
+
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ch:
+		}
 	}
 
 	go func() {
