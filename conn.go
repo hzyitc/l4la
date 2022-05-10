@@ -71,6 +71,13 @@ func (c *Conn) Close() {
 
 func (c *Conn) AddRemoteConn(conn net.Conn) {
 	c.remotesLock.Lock()
+	select {
+	case <-c.ctx.Done():
+		c.remotesLock.Unlock()
+		conn.Close()
+		return
+	default:
+	}
 	c.remotes = append(c.remotes, conn)
 	c.remotesLock.Unlock()
 
@@ -189,7 +196,10 @@ func (c *Conn) main() {
 	}()
 
 	<-c.ctx.Done()
+	c.remotesLock.Lock()
+	c.local.Close()
 	for _, conn := range c.remotes {
 		conn.Close()
 	}
+	c.remotesLock.Unlock()
 }
