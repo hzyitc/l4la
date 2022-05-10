@@ -9,21 +9,24 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/hzyitc/go-notify"
 	"github.com/hzyitc/l4la/buffer"
 	"github.com/hzyitc/mnh/log"
 )
 
 type Conn struct {
-	local   net.Conn
-	remotes []net.Conn
+	local net.Conn
 
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	cond sync.Cond
+	remotesLock   sync.Mutex
+	remotes       []net.Conn
+	remotesNotify notify.Notify
 
-	read    uint64
-	readBuf *buffer.Buffer
+	read     uint64
+	readBuf  *buffer.Buffer
+	readLock sync.Mutex
 
 	selected int
 	write    uint64
@@ -40,16 +43,18 @@ func NewConn(ctx context.Context, local net.Conn) (*Conn, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	c := &Conn{
-		local:   local,
-		remotes: nil,
+		local: local,
 
 		ctx:    ctx,
 		cancel: cancel,
 
-		cond: *sync.NewCond(&sync.Mutex{}),
+		remotesLock:   sync.Mutex{},
+		remotes:       nil,
+		remotesNotify: notify.Notify{},
 
-		read:    0,
-		readBuf: buffer.NewBuffer(),
+		read:     0,
+		readBuf:  buffer.NewBuffer(),
+		readLock: sync.Mutex{},
 
 		selected: 0,
 		write:    0,
@@ -65,16 +70,16 @@ func (c *Conn) Close() {
 }
 
 func (c *Conn) AddRemoteConn(conn net.Conn) {
-	c.cond.L.Lock()
+	c.remotesLock.Lock()
 	c.remotes = append(c.remotes, conn)
-	c.cond.L.Unlock()
+	c.remotesLock.Unlock()
 
 	go func() {
 		c.handleRemote(c.ctx, conn)
 		c.cancel()
 	}()
 
-	c.cond.Broadcast()
+	c.remotesNotify.NotifyAll()
 }
 
 func (c *Conn) handleRemote(ctx context.Context, conn net.Conn) {
@@ -99,8 +104,8 @@ func (c *Conn) handleRemote(ctx context.Context, conn net.Conn) {
 		atomic.AddUint64(&c.read, uint64(h.Size))
 
 		if !func() bool {
-			c.cond.L.Lock()
-			defer c.cond.L.Unlock()
+			c.readLock.Lock()
+			defer c.readLock.Unlock()
 
 			for {
 				_, buf = c.readBuf.Pop(9000, true)
@@ -135,8 +140,10 @@ func (c *Conn) handleLocal(ctx context.Context) {
 			return
 		}
 
+		c.remotesLock.Lock()
 		conn := c.remotes[c.selected]
 		c.selected = (c.selected + 1) % len(c.remotes)
+		c.remotesLock.Unlock()
 
 		err = binary.Write(conn, byteOrder, header{
 			Offset: c.write,
@@ -161,15 +168,20 @@ func (c *Conn) handleLocal(ctx context.Context) {
 }
 
 func (c *Conn) main() {
-	c.cond.L.Lock()
-	for len(c.remotes) < 2 {
+	for {
 		select {
 		case <-c.ctx.Done():
-		default:
+			return
+		case <-c.remotesNotify.Wait():
 		}
-		c.cond.Wait()
+
+		c.remotesLock.Lock()
+		if len(c.remotes) >= 2 {
+			c.remotesLock.Unlock()
+			break
+		}
+		c.remotesLock.Unlock()
 	}
-	c.cond.L.Unlock()
 
 	go func() {
 		c.handleLocal(c.ctx)
