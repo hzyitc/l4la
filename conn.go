@@ -168,6 +168,7 @@ func (c *Conn) handleLocal(ctx context.Context) {
 		}
 		if n != size {
 			log.Error("handleLocal write error:", fmt.Errorf("sent %d bytes instand of %d bytes", n, len(buf[:16+size])))
+			return
 		}
 
 		c.write += uint64(size)
