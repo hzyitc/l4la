@@ -85,6 +85,12 @@ func (s *Server) handle(conn net.Conn) {
 		log.Info("Created new connection", id.String())
 		s.conns.Store(id, c)
 
+		go func() {
+			<-c.WaitClose()
+			s.conns.Delete(id)
+			log.Info("Closed connection", id.String())
+		}()
+
 		buf, err := id.MarshalBinary()
 		if err != nil {
 			log.Error("server_handle id.MarshalBinary error:", err.Error())

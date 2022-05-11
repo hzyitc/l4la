@@ -65,6 +65,10 @@ func NewConn(ctx context.Context, local net.Conn) (*Conn, error) {
 	return c, nil
 }
 
+func (c *Conn) WaitClose() <-chan struct{} {
+	return c.ctx.Done()
+}
+
 func (c *Conn) Close() {
 	c.cancel()
 }
