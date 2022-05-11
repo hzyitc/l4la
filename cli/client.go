@@ -60,6 +60,7 @@ func (c *Client) handle(local net.Conn) {
 	if err != nil {
 		log.Error("client_handle read error:", err.Error())
 		local.Close()
+		conn.Close()
 		return
 	}
 
@@ -67,6 +68,7 @@ func (c *Client) handle(local net.Conn) {
 	if err != nil {
 		log.Error("client_handle read uuid error:", err.Error())
 		local.Close()
+		conn.Close()
 		return
 	}
 
@@ -74,6 +76,7 @@ func (c *Client) handle(local net.Conn) {
 	if err != nil {
 		log.Error("client_handle NewConn error:", err.Error())
 		local.Close()
+		conn.Close()
 		return
 	}
 	cc.AddRemoteConn(conn)

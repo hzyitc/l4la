@@ -71,6 +71,7 @@ func (s *Server) handle(conn net.Conn) {
 		if err != nil {
 			log.Error("server_handle dial error:", err.Error())
 			conn.Close()
+			service.Close()
 			return
 		}
 
@@ -80,6 +81,7 @@ func (s *Server) handle(conn net.Conn) {
 		if err != nil {
 			log.Error("server_handle newRemoteConn error:", err.Error())
 			conn.Close()
+			service.Close()
 			return
 		}
 		log.Info("Created new connection", id.String())
@@ -95,6 +97,7 @@ func (s *Server) handle(conn net.Conn) {
 		if err != nil {
 			log.Error("server_handle id.MarshalBinary error:", err.Error())
 			conn.Close()
+			c.Close()
 			return
 		}
 
@@ -102,11 +105,13 @@ func (s *Server) handle(conn net.Conn) {
 		if err != nil {
 			log.Error("server_handle write error:", err.Error())
 			conn.Close()
+			c.Close()
 			return
 		}
 		if n != len(buf) {
 			log.Error("server_handle write error:", fmt.Errorf("sent %d bytes instand of %d bytes", n, len(buf)))
 			conn.Close()
+			c.Close()
 			return
 		}
 
