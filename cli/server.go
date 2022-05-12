@@ -77,7 +77,7 @@ func (s *Server) handle(conn net.Conn) {
 
 		id = uuid.New()
 
-		c, err := l4la.NewConn(context.TODO(), service)
+		c, err := l4la.NewConn(context.TODO())
 		if err != nil {
 			log.Error("server_handle newRemoteConn error:", err.Error())
 			conn.Close()
@@ -86,6 +86,16 @@ func (s *Server) handle(conn net.Conn) {
 		}
 		log.Info("Created new connection", id.String())
 		s.conns.Store(id, c)
+
+		go func() {
+			io.Copy(c, service)
+			c.Close()
+		}()
+
+		go func() {
+			io.Copy(service, c)
+			service.Close()
+		}()
 
 		go func() {
 			<-c.WaitClose()

@@ -3,11 +3,11 @@ package l4la
 import (
 	"context"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/hzyitc/go-notify"
 	"github.com/hzyitc/l4la/buffer"
@@ -15,8 +15,6 @@ import (
 )
 
 type Conn struct {
-	local net.Conn
-
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -24,12 +22,14 @@ type Conn struct {
 	remotes       []net.Conn
 	remotesNotify notify.Notify
 
-	read     uint64
-	readBuf  *buffer.Buffer
-	readLock sync.Mutex
+	readDeadline time.Time
+	read         uint64
+	readBuf      *buffer.Buffer
+	readNotify   notify.Notify
 
-	selected int
-	write    uint64
+	writeDeadline time.Time
+	selected      int
+	write         uint64
 }
 
 var byteOrder = binary.BigEndian
@@ -39,12 +39,10 @@ type header struct {
 	Size   uint16
 }
 
-func NewConn(ctx context.Context, local net.Conn) (*Conn, error) {
+func NewConn(ctx context.Context) (*Conn, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	c := &Conn{
-		local: local,
-
 		ctx:    ctx,
 		cancel: cancel,
 
@@ -52,15 +50,24 @@ func NewConn(ctx context.Context, local net.Conn) (*Conn, error) {
 		remotes:       nil,
 		remotesNotify: notify.Notify{},
 
-		read:     0,
-		readBuf:  buffer.NewBuffer(),
-		readLock: sync.Mutex{},
+		readDeadline: time.Time{},
+		read:         0,
+		readBuf:      buffer.NewBuffer(),
+		readNotify:   notify.Notify{},
 
-		selected: 0,
-		write:    0,
+		writeDeadline: time.Time{},
+		selected:      0,
+		write:         0,
 	}
 
-	go c.main()
+	go func() {
+		<-c.ctx.Done()
+		c.remotesLock.Lock()
+		for _, conn := range c.remotes {
+			conn.Close()
+		}
+		c.remotesLock.Unlock()
+	}()
 
 	return c, nil
 }
@@ -69,8 +76,9 @@ func (c *Conn) WaitClose() <-chan struct{} {
 	return c.ctx.Done()
 }
 
-func (c *Conn) Close() {
+func (c *Conn) Close() error {
 	c.cancel()
+	return nil
 }
 
 func (c *Conn) AddRemoteConn(conn net.Conn) {
@@ -114,99 +122,99 @@ func (c *Conn) handleRemote(ctx context.Context, conn net.Conn) {
 		c.readBuf.Write(h.Offset, buf)
 		atomic.AddUint64(&c.read, uint64(h.Size))
 
-		if !func() bool {
-			c.readLock.Lock()
-			defer c.readLock.Unlock()
-
-			for {
-				_, buf = c.readBuf.Pop(9000, true)
-				if buf == nil {
-					return true
-				}
-
-				n, err := c.local.Write(buf)
-				if err != nil {
-					log.Error("handleRemote write error:", err.Error())
-					return false
-				}
-				if n != len(buf) {
-					log.Error("handleRemote write error:", fmt.Sprintf("sent %d bytes instand of %d bytes", n, len(buf)))
-					return false
-				}
-			}
-		}() {
-			return
-		}
+		c.readNotify.NotifyAll()
 	}
 }
 
-func (c *Conn) handleLocal(ctx context.Context) {
-	defer c.local.Close()
-
-	buf := make([]byte, 9000)
+func (c *Conn) Read(b []byte) (n int, err error) {
 	for {
-		size, err := c.local.Read(buf)
-		if err != nil {
-			log.Error("handleLocal error:", err.Error())
-			return
+		ch := c.readNotify.Wait()
+
+		_, buf := c.readBuf.Pop(len(b), true)
+		if buf != nil {
+			return copy(b, buf), nil
 		}
 
-		c.remotesLock.Lock()
-		conn := c.remotes[c.selected]
-		c.selected = (c.selected + 1) % len(c.remotes)
-		c.remotesLock.Unlock()
-
-		err = binary.Write(conn, byteOrder, header{
-			Offset: c.write,
-			Size:   uint16(size),
-		})
-		if err != nil {
-			log.Error("handleLocal write header error:", err.Error())
-			return
+		select {
+		case <-c.ctx.Done():
+			return 0, ErrClose
+		case <-timeAfter(c.readDeadline):
+			return 0, ErrTimeout
+		case <-ch:
 		}
-
-		n, err := conn.Write(buf[:size])
-		if err != nil {
-			log.Error("handleLocal write error:", err.Error())
-			return
-		}
-		if n != size {
-			log.Error("handleLocal write error:", fmt.Errorf("sent %d bytes instand of %d bytes", n, len(buf[:16+size])))
-			return
-		}
-
-		c.write += uint64(size)
 	}
 }
 
-func (c *Conn) main() {
+func (c *Conn) Write(b []byte) (n int, err error) {
 	for {
 		ch := c.remotesNotify.Wait()
 
 		c.remotesLock.Lock()
 		if len(c.remotes) >= 2 {
-			c.remotesLock.Unlock()
 			break
 		}
 		c.remotesLock.Unlock()
 
 		select {
 		case <-c.ctx.Done():
-			return
+			return 0, ErrClose
+		case <-timeAfter(c.writeDeadline):
+			return 0, ErrTimeout
 		case <-ch:
 		}
 	}
+	defer c.remotesLock.Unlock()
 
-	go func() {
-		c.handleLocal(c.ctx)
-		c.cancel()
-	}()
+	conn := c.remotes[c.selected]
+	c.selected = (c.selected + 1) % len(c.remotes)
 
-	<-c.ctx.Done()
-	c.remotesLock.Lock()
-	c.local.Close()
-	for _, conn := range c.remotes {
-		conn.Close()
+	err = binary.Write(conn, byteOrder, header{
+		Offset: c.write,
+		Size:   uint16(len(b)),
+	})
+	if err != nil {
+		c.Close()
+		return 0, err
 	}
-	c.remotesLock.Unlock()
+
+	n, err = conn.Write(b)
+	if err != nil {
+		c.Close()
+		return 0, err
+	}
+	if n != len(b) {
+		c.Close()
+		return 0, err
+	}
+
+	c.write += uint64(len(b))
+
+	return n, nil
+}
+
+func (c *Conn) LocalAddr() net.Addr {
+	return &Addr{}
+}
+
+func (c *Conn) RemoteAddr() net.Addr {
+	return &Addr{}
+}
+
+func (c *Conn) SetDeadline(t time.Time) error {
+	err := c.SetReadDeadline(t)
+	if err == nil {
+		return err
+	}
+
+	return c.SetWriteDeadline(t)
+}
+
+func (c *Conn) SetReadDeadline(t time.Time) error {
+	c.readDeadline = t
+	return nil
+}
+
+func (c *Conn) SetWriteDeadline(t time.Time) error {
+	c.writeDeadline = t
+	return nil
 }

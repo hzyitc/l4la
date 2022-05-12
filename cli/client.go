@@ -48,10 +48,27 @@ func (c *Client) main(listener net.Listener) {
 func (c *Client) handle(local net.Conn) {
 	log.Info("New connection from " + local.RemoteAddr().String())
 
+	cc, err := l4la.NewConn(context.TODO())
+	if err != nil {
+		log.Error("client_handle NewConn error:", err.Error())
+		local.Close()
+		return
+	}
+
+	go func() {
+		io.Copy(cc, local)
+		cc.Close()
+	}()
+
+	go func() {
+		io.Copy(local, cc)
+		local.Close()
+	}()
+
 	conn, err := newRemoteConn(c.server, uuid.Nil)
 	if err != nil {
 		log.Error("client_handle newRemoteConn error:", err.Error())
-		local.Close()
+		cc.Close()
 		return
 	}
 
@@ -59,7 +76,7 @@ func (c *Client) handle(local net.Conn) {
 	_, err = io.ReadFull(conn, buf)
 	if err != nil {
 		log.Error("client_handle read error:", err.Error())
-		local.Close()
+		cc.Close()
 		conn.Close()
 		return
 	}
@@ -67,18 +84,11 @@ func (c *Client) handle(local net.Conn) {
 	id, err := uuid.FromBytes(buf)
 	if err != nil {
 		log.Error("client_handle read uuid error:", err.Error())
-		local.Close()
+		cc.Close()
 		conn.Close()
 		return
 	}
 
-	cc, err := l4la.NewConn(context.TODO(), local)
-	if err != nil {
-		log.Error("client_handle NewConn error:", err.Error())
-		local.Close()
-		conn.Close()
-		return
-	}
 	cc.AddRemoteConn(conn)
 
 	for i := 1; i < c.conn_number; i++ {
