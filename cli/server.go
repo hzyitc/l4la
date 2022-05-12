@@ -71,7 +71,6 @@ func (s *Server) handle(conn net.Conn) {
 		if err != nil {
 			log.Error("server_handle dial error:", err.Error())
 			conn.Close()
-			service.Close()
 			return
 		}
 
